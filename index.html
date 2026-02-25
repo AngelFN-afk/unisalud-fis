@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UniSalud - FIS UNICA 2026</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>tailwind.config = { darkMode: 'class' }</script>
+    <style>
+        @keyframes print { 0% { transform: translateY(-100%); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
+        .animate-print { animation: print 0.8s ease-out forwards; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #3b82f6; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-200 min-h-screen transition-colors duration-300 font-sans overflow-x-hidden">
+
+    <header class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 p-4 sticky top-0 z-50 shadow-sm">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div onclick="location.reload()" class="cursor-pointer group">
+                <h1 class="text-xl font-black text-blue-600 dark:text-blue-500 uppercase italic group-hover:scale-105 transition-transform">UNIVERSIDAD SAN LUIS GONZAGA</h1>
+                <p class="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Facultad de Ingeniería de Sistemas - UniSalud</p>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <button onclick="toggleDarkMode()" class="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-500 hover:text-white transition-all">🌙</button>
+                <div id="user-tag" class="hidden md:block text-[10px] bg-blue-100 dark:bg-blue-900/30 px-3 py-1 rounded-full border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 font-mono font-bold uppercase"></div>
+                <button id="auth-btn" onclick="toggleAuthView()" class="text-[10px] font-bold uppercase px-4 py-1.5 rounded-full transition-all border border-blue-200 dark:border-blue-800 shadow-sm"></button>
+            </div>
+        </div>
+    </header>
+
+    <main id="app" class="max-w-7xl mx-auto p-6">
+        <div id="boot-loader" class="flex flex-col items-center justify-center h-96">
+            <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+            <p class="mt-4 text-slate-500 text-[10px] uppercase font-bold tracking-widest">Sincronizando con Supabase Cloud...</p>
+        </div>
+    </main>
+
+    <div id="print-modal" class="fixed inset-0 bg-black/80 z-[100] hidden flex items-center justify-center">
+        <div class="bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-2xl text-center max-w-xs w-full mx-4 relative overflow-hidden">
+            <div class="h-32 mb-4 bg-slate-100 dark:bg-slate-900 rounded-xl relative overflow-hidden">
+                <div id="ticket-anim" class="bg-white dark:bg-slate-700 p-4 border-2 border-dashed border-slate-400 rounded-lg mx-4 mt-4 hidden animate-print">
+                    <p class="text-[10px] font-black text-blue-500 mb-1">FIS - UNISALUD</p>
+                    <p id="anim-code" class="text-3xl font-black text-slate-900 dark:text-white">---</p>
+                    <p class="text-[8px] text-slate-400 uppercase mt-2 font-bold italic">¡Tome su ticket!</p>
+                </div>
+            </div>
+            <p class="text-xs font-black uppercase text-slate-500">Imprimiendo Ticket...</p>
+            <p class="text-[9px] text-orange-500 font-bold mt-2 animate-pulse uppercase">Espere 3 segundos</p>
+        </div>
+    </div>
+
+    <script>
+        const SB_URL = "https://xydqavrhtfnkwgcbaabi.supabase.co";
+        const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh5ZHFhdnJodGZua3dnY2JhYWJpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE0NTE0OTQsImV4cCI6MjA4NzAyNzQ5NH0.pJWKXj5MS8cb0_iOjI5e4S5MfFCOspDp_Wk_gWgqUYU";
+        const _supabase = supabase.createClient(SB_URL, SB_KEY);
+
+        window.currentSession = null;
+        window.userProfile = null;
+        window.isLoginView = false;
+        window.isGenerating = false;
+
+        async function init() {
+            try {
+                const { data: { session }, error: sessionError } = await _supabase.auth.getSession();
+                if (sessionError) throw sessionError;
+                
+                window.currentSession = session;
+                const btnAuth = document.getElementById('auth-btn');
+
+                if (session) {
+                    const { data: p, error: pError } = await _supabase.from('perfiles').select('*').eq('id', session.user.id).single();
+                    if (pError) throw pError;
+                    
+                    window.userProfile = p;
+                    document.getElementById('user-tag').innerText = p.rol;
+                    document.getElementById('user-tag').classList.remove('hidden');
+                    btnAuth.innerText = "Salir";
+                    btnAuth.className = "text-[10px] bg-red-500 text-white px-4 py-1.5 rounded-full font-bold uppercase shadow-lg shadow-red-900/20";
+                    renderByRole(p.rol);
+                } else {
+                    document.getElementById('user-tag').classList.add('hidden');
+                    btnAuth.innerText = window.isLoginView ? "Volver al Tótem" : "Acceso Personal";
+                    btnAuth.className = "text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-4 py-1.5 rounded-full font-bold uppercase border border-blue-200 dark:border-blue-800";
+                    if (window.isLoginView) renderLogin(); else renderVisitor();
+                }
+            } catch (err) {
+                document.getElementById('app').innerHTML = `<div class="text-center p-10"><h2 class="text-red-500 font-bold uppercase">Error de Sincronización</h2><p class="text-xs mt-2">${err.message}</p></div>`;
+            }
+        }
+
+        function toggleAuthView() {
+            if (window.currentSession) logout();
+            else { window.isLoginView = !window.isLoginView; init(); }
+        }
+
+        // --- MÓDULO 2: TÓTEM (VISTA VISITANTE) ---
+        async function renderVisitor() {
+            try {
+                const { data: srvs } = await _supabase.from('servicios').select('*').eq('activo', true);
+                const { data: tv } = await _supabase.from('turnos').select('codigo_ticket').eq('estado', 'LLAMADO').order('llamado_en', { ascending: false }).limit(1).maybeSingle();
+
+                document.getElementById('app').innerHTML = `
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in duration-500">
+                        <div class="bg-white dark:bg-slate-900 p-8 rounded-3xl border dark:border-slate-800 shadow-xl">
+                            <h2 class="text-2xl font-black mb-8 text-blue-600 dark:text-blue-500 uppercase italic">Tótem Estudiantil</h2>
+                            <div class="space-y-6">
+                                <div>
+                                    <label class="text-[10px] font-black text-slate-400 uppercase mb-2 block">1. Seleccione Servicio</label>
+                                    <select id="sel-srv" onchange="checkGenBtn()" class="w-full bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border dark:border-slate-800 font-bold outline-none focus:ring-2 ring-blue-500">
+                                        <option value="">-- Elige una opción --</option>
+                                        ${srvs ? srvs.map(s => `<option value="${s.id}" data-name="${s.nombre}">${s.nombre}</option>`).join('') : ''}
+                                    </select>
+                                </div>
+                                <div class="flex gap-3">
+                                    <label class="flex-1 text-center p-3 bg-slate-50 dark:bg-slate-950 rounded-2xl border dark:border-slate-800 cursor-pointer"><input type="radio" name="prio" value="NORMAL" checked class="hidden peer"><span class="peer-checked:text-blue-600 text-[10px] font-black uppercase">Normal</span></label>
+                                    <label class="flex-1 text-center p-3 bg-slate-50 dark:bg-slate-950 rounded-2xl border dark:border-slate-800 cursor-pointer"><input type="radio" name="prio" value="PREFERENTE" class="hidden peer"><span class="peer-checked:text-orange-500 text-[10px] font-black uppercase">Preferencial</span></label>
+                                </div>
+                                <button id="gen-btn" onclick="processTicket()" class="w-full bg-blue-600 text-white py-6 rounded-3xl font-black text-xl opacity-30 pointer-events-none transition-all shadow-xl">Generar Ticket</button>
+                            </div>
+                        </div>
+                        <div class="bg-slate-200 dark:bg-black p-8 rounded-3xl border-4 border-white dark:border-slate-900 flex flex-col items-center justify-center text-center">
+                            <p class="text-slate-400 font-bold uppercase text-[10px] mb-4 tracking-[0.4em]">Atendiendo Ahora</p>
+                            <div id="tv-ticket" class="text-9xl font-black text-blue-600 dark:text-blue-500 drop-shadow-[0_0_15px_rgba(37,99,235,0.4)]">${tv?.codigo_ticket || '---'}</div>
+                        </div>
+                    </div>`;
+                initRealtime();
+            } catch (e) { document.getElementById('app').innerHTML = `<p class="text-red-500 text-center">Error: ${e.message}</p>`; }
+        }
+
+        function checkGenBtn() { 
+            const b = document.getElementById('gen-btn'); 
+            const ok = document.getElementById('sel-srv').value && !window.isGenerating; 
+            b.classList.toggle('opacity-30', !ok); b.classList.toggle('pointer-events-none', !ok); 
+        }
+
+        async function processTicket() {
+            if (window.isGenerating) return;
+            const sel = document.getElementById('sel-srv');
+            const cod = sel.options[sel.selectedIndex].getAttribute('data-name').substring(0,3).toUpperCase() + "-" + Math.floor(Math.random()*900+100);
+            
+            window.isGenerating = true;
+            document.getElementById('anim-code').innerText = cod;
+            document.getElementById('print-modal').classList.remove('hidden');
+            setTimeout(() => document.getElementById('ticket-anim').classList.remove('hidden'), 100);
+
+            const { error } = await _supabase.from('turnos').insert([{ codigo_ticket: cod, servicio_id: sel.value, prioridad: document.querySelector('input[name="prio"]:checked').value, estado: 'EN_COLA' }]);
+
+            setTimeout(() => {
+                window.isGenerating = false;
+                document.getElementById('print-modal').classList.add('hidden');
+                document.getElementById('ticket-anim').classList.add('hidden');
+                sel.value = ""; checkGenBtn();
+            }, 3000);
+        }
+
+        // --- MÓDULO 3: VISTA OPERADOR (CON ANULAR Y DERIVAR) ---
+        async function renderOperator() {
+            try {
+                const { data: cola } = await _supabase.from('turnos').select('*').eq('estado', 'EN_COLA').order('prioridad', { ascending: false }).order('creado_en', { ascending: true }); 
+                const { data: act } = await _supabase.from('turnos').select('*').eq('operador_id', window.currentSession.user.id).in('estado', ['LLAMADO', 'EN_ATENCION']).maybeSingle();
+
+                const navButton = window.userProfile?.rol === 'ADMINISTRADOR' 
+                    ? `<button onclick="renderAdmin()" class="text-[9px] bg-red-50 dark:bg-red-900/30 text-red-600 px-4 py-1.5 rounded-full border border-red-200 dark:border-red-800 font-bold uppercase hover:bg-red-600 hover:text-white transition-all shadow-sm">Volver a Admin</button>`
+                    : `<button onclick="renderVisitor()" class="text-[9px] bg-slate-100 dark:bg-slate-800 px-4 py-1.5 rounded-full border dark:border-slate-700 font-bold uppercase hover:bg-blue-600 hover:text-white transition-all shadow-sm">Ir al Tótem</button>`;
+
+                document.getElementById('app').innerHTML = `
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in slide-in-from-bottom-4">
+                        <div class="lg:col-span-2 bg-white dark:bg-slate-900 p-8 rounded-3xl border dark:border-slate-800 shadow-xl text-center flex flex-col justify-between">
+                            <div>
+                                <div class="flex justify-between items-center mb-8 border-b dark:border-slate-800 pb-4">
+                                    <h2 class="text-xl font-black text-blue-500 uppercase italic">Ventanilla de Atención</h2>
+                                    ${navButton}
+                                </div>
+                                ${act ? `
+                                    <div class="bg-slate-50 dark:bg-slate-950 p-12 rounded-3xl mb-8 border border-blue-500/10"><h3 class="text-8xl font-black">${act.codigo_ticket}</h3></div>
+                                    <textarea id="obs" placeholder="Escriba aquí los detalles de la atención, o el motivo si va a Anular/Derivar..." class="w-full bg-slate-50 dark:bg-slate-900 p-4 rounded-2xl mb-6 border dark:border-slate-800 text-sm outline-none focus:ring-2 ring-blue-500 transition-all h-24"></textarea>
+                                    
+                                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                        <button onclick="changeTicketState('${act.id}', 'FINALIZADO')" class="w-full bg-green-600 text-white py-4 rounded-2xl font-black uppercase shadow-lg shadow-green-900/20 active:scale-95 transition-all text-[11px]">✅ Finalizar</button>
+                                        <button onclick="changeTicketState('${act.id}', 'DERIVADO')" class="w-full bg-orange-500 text-white py-4 rounded-2xl font-black uppercase shadow-lg shadow-orange-900/20 active:scale-95 transition-all text-[11px]">⚠️ Derivar a Admin</button>
+                                        <button onclick="changeTicketState('${act.id}', 'ANULADO')" class="w-full bg-red-600 text-white py-4 rounded-2xl font-black uppercase shadow-lg shadow-red-900/20 active:scale-95 transition-all text-[11px]">❌ Anular (No asiste)</button>
+                                    </div>
+                                ` : `
+                                    <div class="py-24 flex flex-col items-center">
+                                        <p class="text-slate-400 mb-8 italic">Ventanilla libre. No tiene turnos asignados.</p>
+                                        <button onclick="callNext()" class="bg-blue-600 text-white px-16 py-8 rounded-3xl font-black text-2xl shadow-xl shadow-blue-900/30 active:scale-95 transition-all hover:bg-blue-500">LLAMAR SIGUIENTE</button>
+                                    </div>
+                                `}
+                            </div>
+                        </div>
+                        <div class="bg-white dark:bg-slate-900 p-6 rounded-3xl border dark:border-slate-800 flex flex-col">
+                            <h3 class="text-[11px] font-black text-slate-400 uppercase mb-6 tracking-widest border-b dark:border-slate-800 pb-2">Cola de Estudiantes (${cola?.length || 0})</h3>
+                            <div class="space-y-3 overflow-y-auto max-h-[500px] pr-2 custom-scrollbar">
+                                ${cola?.map(c => `<div class="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border dark:border-slate-800 font-black flex justify-between items-center animate-in slide-in-from-right-2"><span>${c.codigo_ticket}</span><span class="text-[8px] opacity-40 uppercase ${c.prioridad === 'PREFERENTE' ? 'text-orange-500' : ''}">${c.prioridad}</span></div>`).join('') || '<p class="text-center text-slate-400 text-xs py-10">Sin tickets en espera.</p>'}
+                            </div>
+                        </div>
+                    </div>`;
+            } catch (e) { document.getElementById('app').innerHTML = `<p class="text-red-500 text-center">Error: ${e.message}</p>`; }
+        }
+
+        async function callNext() {
+            try {
+                const { data: nextTicket } = await _supabase.from('turnos').select('servicio_id').eq('estado', 'EN_COLA').order('prioridad', { ascending: false }).order('creado_en', { ascending: true }).limit(1).maybeSingle();
+                if (!nextTicket) return alert("La cola está vacía. Buen trabajo.");
+
+                const { data: ven } = await _supabase.from('ventanillas').select('id').limit(1).single();
+                const { error } = await _supabase.rpc('solicitar_siguiente_turno', { p_servicio_id: nextTicket.servicio_id, p_operador_id: window.currentSession.user.id, p_ventanilla_id: ven.id });
+                if (error) throw error;
+                renderOperator();
+            } catch (e) { alert(e.message || "Error al asignar el siguiente ticket."); }
+        }
+
+        // Lógica unificada para procesar el estado del ticket
+        async function changeTicketState(tid, newState) {
+            const obsInput = document.getElementById('obs').value.trim();
+            let obsText = obsInput;
+
+            // Si se anula o deriva, forzamos al operador a explicar el motivo
+            if ((newState === 'DERIVADO' || newState === 'ANULADO') && obsInput === "") {
+                const promptMsg = prompt(`Escriba el motivo obligatorio para marcar como ${newState}:`);
+                if (!promptMsg) return; // Si el usuario cancela, no hacemos nada
+                obsText = promptMsg;
+            } else if (obsInput === "") {
+                obsText = "Atención finalizada con éxito";
+            }
+
+            // Actualizamos la base de datos con el nuevo estado
+            const { error } = await _supabase.from('turnos')
+                .update({ 
+                    estado: newState, 
+                    finalizado_en: new Date().toISOString(), 
+                    observaciones: obsText 
+                })
+                .eq('id', tid);
+
+            if (error) alert("Error al procesar el ticket: " + error.message);
+            else renderOperator(); // Recargamos para traer el siguiente
+        }
+
+        // --- MÓDULO 4: VISTA ADMINISTRADOR (CON BANDEJA DE DERIVADOS) ---
+        async function renderAdmin() {
+            const { data: perfiles } = await _supabase.from('perfiles').select('*');
+            
+            // Obtenemos los tickets derivados para la bandeja del Admin
+            const { data: derivados } = await _supabase.from('turnos').select('id, codigo_ticket, observaciones, creado_en').eq('estado', 'DERIVADO').order('creado_en', { ascending: false });
+
+            document.getElementById('app').innerHTML = `
+                <div class="space-y-6 animate-in slide-in-from-bottom-4">
+                    <div class="flex flex-col md:flex-row justify-between items-center bg-white dark:bg-slate-900 p-8 rounded-3xl border dark:border-slate-800 shadow-lg">
+                        <div class="text-center md:text-left mb-4 md:mb-0">
+                            <h2 class="text-2xl font-black text-red-600 dark:text-red-500 uppercase italic">Centro de Control Administrativo</h2>
+                            <p class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Panel de Angel Farfan</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="exportCSV()" class="bg-green-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-green-900/20">Exportar Reporte CSV</button>
+                            <button onclick="renderOperator()" class="bg-blue-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-900/20">Ir a Ventanilla</button>
+                        </div>
+                    </div>
+
+                    ${derivados && derivados.length > 0 ? `
+                        <div class="bg-orange-50 dark:bg-orange-900/10 p-8 rounded-3xl border border-orange-200 dark:border-orange-800/30 shadow-sm animate-pulse">
+                            <h3 class="text-sm font-black text-orange-600 dark:text-orange-500 uppercase mb-4 tracking-widest flex items-center gap-2">⚠️ Bandeja de Casos Derivados (${derivados.length})</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                ${derivados.map(d => `
+                                    <div class="bg-white dark:bg-slate-900 p-5 rounded-2xl border dark:border-slate-800 shadow-sm">
+                                        <h4 class="font-black text-lg mb-1">${d.codigo_ticket}</h4>
+                                        <p class="text-xs text-slate-500 mb-4 h-12 overflow-hidden text-ellipsis italic">Motivo: "${d.observaciones}"</p>
+                                        <button onclick="resolveDerivedTicket('${d.id}')" class="w-full bg-slate-800 text-white py-3 rounded-xl text-[10px] font-bold uppercase hover:bg-orange-600 transition-colors">Resolver y Finalizar</button>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="bg-white dark:bg-slate-900 p-8 rounded-3xl border dark:border-slate-800 flex flex-col items-center">
+                            <h3 class="text-xs font-black text-slate-400 uppercase mb-6 tracking-widest italic border-b pb-2">Distribución de Trámites</h3>
+                            <canvas id="pieChart" class="max-h-64"></canvas>
+                        </div>
+                        <div class="bg-white dark:bg-slate-900 p-8 rounded-3xl border dark:border-slate-800">
+                            <h3 class="text-xs font-black text-slate-400 uppercase mb-6 tracking-widest italic border-b pb-2">Registrar Nuevo Acceso de Personal</h3>
+                            <div class="space-y-3 pt-4">
+                                <input id="u-mail" type="email" placeholder="Correo Universitario" class="w-full bg-slate-50 dark:bg-slate-950 p-4 rounded-xl text-xs border dark:border-slate-800 outline-none focus:ring-2 ring-blue-500 text-slate-900 dark:text-white">
+                                <input id="u-name" type="text" placeholder="Nombre Completo" class="w-full bg-slate-50 dark:bg-slate-950 p-4 rounded-xl text-xs border dark:border-slate-800 outline-none focus:ring-2 ring-blue-500 text-slate-900 dark:text-white">
+                                <input id="u-pass" type="password" placeholder="Contraseña Segura" class="w-full bg-slate-50 dark:bg-slate-950 p-4 rounded-xl text-xs border dark:border-slate-800 outline-none focus:ring-2 ring-blue-500 text-slate-900 dark:text-white">
+                                <select id="u-role" class="w-full bg-slate-50 dark:bg-slate-950 p-4 rounded-xl text-xs border dark:border-slate-800 font-bold outline-none text-slate-900 dark:text-white">
+                                    <option value="OPERADOR">OPERADOR (Ventanilla)</option>
+                                    <option value="ADMINISTRADOR">ADMINISTRADOR (Supervisor)</option>
+                                </select>
+                                <button onclick="createUser()" class="w-full bg-slate-800 text-white py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl active:scale-95 transition-all mt-2">Crear Credenciales</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white dark:bg-slate-900 p-8 rounded-3xl border dark:border-slate-800 overflow-x-auto">
+                        <table class="w-full text-left text-[10px] font-bold">
+                            <thead><tr class="text-slate-500 uppercase border-b dark:border-slate-800"><th class="pb-3">Personal</th><th class="pb-3">Correo Electrónico</th><th class="pb-3 text-right">Rol de Sistema</th></tr></thead>
+                            <tbody>${perfiles ? perfiles.map(u => `<tr class="border-b dark:border-slate-800 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-950/50 transition-colors"><td class="py-3">${u.nombre_completo}</td><td class="py-3">${u.email}</td><td class="py-3 text-right text-blue-500 uppercase font-black">${u.rol}</td></tr>`).join('') : ''}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+            initPieChart();
+        }
+
+        // Función del Administrador para resolver el ticket derivado
+        async function resolveDerivedTicket(tid) {
+            const adminObs = prompt("Escriba la nota de resolución para este caso especial:");
+            if (adminObs === null) return; // Si cancela, se aborta
+
+            const { error } = await _supabase.from('turnos')
+                .update({ 
+                    estado: 'FINALIZADO', 
+                    observaciones: "RESUELTO POR ADMIN: " + (adminObs || "Sin detalles adicionales")
+                })
+                .eq('id', tid);
+                
+            if (error) alert("Error al resolver: " + error.message);
+            else renderAdmin(); // Refrescar bandeja
+        }
+
+        async function createUser() {
+            const email = document.getElementById('u-mail').value;
+            const name = document.getElementById('u-name').value;
+            const role = document.getElementById('u-role').value;
+            const pass = document.getElementById('u-pass').value;
+
+            if(!email || !name || !pass) return alert("Por favor complete todos los campos requeridos.");
+            
+            const { data: authData, error: authError } = await _supabase.auth.signUp({ email: email, password: pass });
+            if (authError) return alert("Error del servidor Auth: " + authError.message);
+
+            const userId = authData.user ? authData.user.id : null;
+            const insertData = { email: email, nombre_completo: name, rol: role, password_hash: pass };
+            if (userId) insertData.id = userId;
+
+            const { error: profileError } = await _supabase.from('perfiles').insert([insertData]);
+            
+            if(profileError) alert("Error de Perfil: " + profileError.message);
+            else { 
+                alert("✅ Usuario registrado.\n\nEl sistema puede cerrar tu sesión por seguridad de Supabase para activar la nueva cuenta. Si ocurre, vuelve a ingresar como Admin."); 
+                renderAdmin(); 
+            }
+        }
+
+        async function exportCSV() {
+            try {
+                const { data, error } = await _supabase.from('turnos').select('codigo_ticket, estado, prioridad, creado_en, observaciones');
+                if (error) throw error;
+                let csvContent = "Ticket,Estado,Prioridad,Fecha,Observaciones\n";
+                data.forEach(t => csvContent += `${t.codigo_ticket},${t.estado},${t.prioridad},${new Date(t.creado_en).toLocaleString()},"${t.observaciones || ''}"\n`);
+                const blob = new Blob([csvContent], { type: 'text/csv' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href = url; a.download = 'Reporte_Auditoria_UniSalud_FIS.csv'; a.click();
+            } catch (e) { alert("Error de exportación: " + e.message); }
+        }
+
+        // --- FUNCIONES DE APOYO ---
+        function initPieChart() {
+            const ctx = document.getElementById('pieChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: { labels: ['Secretaría', 'Caja', 'Biblioteca', 'Bienestar'], datasets: [{ data: [15, 22, 10, 8], backgroundColor: ['#3b82f6', '#f59e0b', '#ef4444', '#10b981'], borderColor: 'transparent' }] },
+                options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', font: { weight: 'bold', size: 10 } } } } }
+            });
+        }
+
+        function initRealtime() {
+            _supabase.channel('tv_updates').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'turnos' }, payload => {
+                if (payload.new.estado === 'LLAMADO' && document.getElementById('tv-ticket')) { document.getElementById('tv-ticket').innerText = payload.new.codigo_ticket; }
+            }).subscribe();
+        }
+
+        function renderLogin() {
+            document.getElementById('app').innerHTML = `
+                <div class="max-w-sm mx-auto p-10 bg-white dark:bg-slate-900 rounded-3xl border dark:border-slate-800 text-center shadow-2xl animate-in zoom-in-95 mt-10">
+                    <h2 class="font-black mb-8 uppercase text-blue-500 tracking-tighter italic">Acceso Personal FIS</h2>
+                    <div class="space-y-4">
+                        <input id="login-email" type="email" placeholder="Correo Institucional" class="w-full bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border dark:border-slate-800 text-xs focus:ring-2 ring-blue-500 outline-none text-slate-900 dark:text-white">
+                        <input id="login-pass" type="password" placeholder="Contraseña Segura" class="w-full bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border dark:border-slate-800 text-xs focus:ring-2 ring-blue-500 outline-none text-slate-900 dark:text-white">
+                        <button onclick="login()" class="w-full bg-blue-600 text-white py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl transition-all active:scale-95">Ingresar al Sistema</button>
+                    </div>
+                </div>`;
+        }
+
+        async function login() {
+            const { error } = await _supabase.auth.signInWithPassword({ email: document.getElementById('login-email').value, password: document.getElementById('login-pass').value });
+            if (error) alert("Denegado: Credenciales no válidas en el sistema."); else location.reload();
+        }
+
+        async function logout() { await _supabase.auth.signOut(); location.reload(); }
+        function toggleDarkMode() { const isDark = document.documentElement.classList.toggle('dark'); localStorage.setItem('theme', isDark ? 'dark' : 'light'); }
+        function renderByRole(r) { if (r === 'ADMINISTRADOR') renderAdmin(); else renderOperator(); }
+
+        if (localStorage.getItem('theme') === 'light') document.documentElement.classList.remove('dark');
+        init();
+    </script>
+</body>
+</html>
