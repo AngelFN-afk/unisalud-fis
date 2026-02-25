@@ -58,23 +58,25 @@
         const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh5ZHFhdnJodGZua3dnY2JhYWJpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE0NTE0OTQsImV4cCI6MjA4NzAyNzQ5NH0.pJWKXj5MS8cb0_iOjI5e4S5MfFCOspDp_Wk_gWgqUYU";
         const _supabase = supabase.createClient(SB_URL, SB_KEY);
 
+        // ESTADOS GLOBALES
         window.currentSession = null;
         window.userProfile = null;
         window.isLoginView = false;
         window.isGenerating = false;
+        let realtimeChannel = null; // NUEVA VARIABLE PARA EL CANAL GLOBAL
 
         async function init() {
             try {
                 const { data: { session }, error: sessionError } = await _supabase.auth.getSession();
                 if (sessionError) throw sessionError;
-                
+ 
                 window.currentSession = session;
                 const btnAuth = document.getElementById('auth-btn');
 
                 if (session) {
                     const { data: p, error: pError } = await _supabase.from('perfiles').select('*').eq('id', session.user.id).single();
                     if (pError) throw pError;
-                    
+ 
                     window.userProfile = p;
                     document.getElementById('user-tag').innerText = p.rol;
                     document.getElementById('user-tag').classList.remove('hidden');
@@ -87,6 +89,10 @@
                     btnAuth.className = "text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-4 py-1.5 rounded-full font-bold uppercase border border-blue-200 dark:border-blue-800";
                     if (window.isLoginView) renderLogin(); else renderVisitor();
                 }
+
+                // INICIAMOS EL REALTIME GLOBAL AL ARRANCAR LA APLICACIÓN
+                setupGlobalRealtime();
+
             } catch (err) {
                 document.getElementById('app').innerHTML = `<div class="text-center p-10"><h2 class="text-red-500 font-bold uppercase">Error de Sincronización</h2><p class="text-xs mt-2">${err.message}</p></div>`;
             }
@@ -95,6 +101,33 @@
         function toggleAuthView() {
             if (window.currentSession) logout();
             else { window.isLoginView = !window.isLoginView; init(); }
+        }
+
+        // --- NUEVO MOTOR INTELIGENTE DE TIEMPO REAL ---
+        function setupGlobalRealtime() {
+            // Limpiar canales previos para no duplicar escuchas
+            if (realtimeChannel) _supabase.removeChannel(realtimeChannel);
+
+            realtimeChannel = _supabase.channel('motor-turnos')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'turnos' }, (payload) => {
+                    
+                    // 1. Lógica para el Tótem (TV): Solo actualiza si alguien llama un ticket
+                    if (payload.eventType === 'UPDATE' && payload.new.estado === 'LLAMADO') {
+                        const tv = document.getElementById('tv-ticket');
+                        if (tv) tv.innerText = payload.new.codigo_ticket;
+                    }
+
+                    // 2. Lógica para Personal: Refresca las vistas (Admin u Operador) 
+                    // cuando entra un nuevo ticket (INSERT) o cambia de estado (UPDATE)
+                    if (window.currentSession && window.userProfile) {
+                        if (window.userProfile.rol === 'ADMINISTRADOR') {
+                            renderAdmin();
+                        } else {
+                            renderOperator();
+                        }
+                    }
+                })
+                .subscribe();
         }
 
         // --- MÓDULO 2: TÓTEM (VISTA VISITANTE) ---
@@ -127,21 +160,20 @@
                             <div id="tv-ticket" class="text-9xl font-black text-blue-600 dark:text-blue-500 drop-shadow-[0_0_15px_rgba(37,99,235,0.4)]">${tv?.codigo_ticket || '---'}</div>
                         </div>
                     </div>`;
-                initRealtime();
             } catch (e) { document.getElementById('app').innerHTML = `<p class="text-red-500 text-center">Error: ${e.message}</p>`; }
         }
 
-        function checkGenBtn() { 
-            const b = document.getElementById('gen-btn'); 
-            const ok = document.getElementById('sel-srv').value && !window.isGenerating; 
-            b.classList.toggle('opacity-30', !ok); b.classList.toggle('pointer-events-none', !ok); 
+        function checkGenBtn() {
+            const b = document.getElementById('gen-btn');
+            const ok = document.getElementById('sel-srv').value && !window.isGenerating;
+            b.classList.toggle('opacity-30', !ok); b.classList.toggle('pointer-events-none', !ok);
         }
 
         async function processTicket() {
             if (window.isGenerating) return;
             const sel = document.getElementById('sel-srv');
             const cod = sel.options[sel.selectedIndex].getAttribute('data-name').substring(0,3).toUpperCase() + "-" + Math.floor(Math.random()*900+100);
-            
+ 
             window.isGenerating = true;
             document.getElementById('anim-code').innerText = cod;
             document.getElementById('print-modal').classList.remove('hidden');
@@ -160,10 +192,10 @@
         // --- MÓDULO 3: VISTA OPERADOR (CON ANULAR Y DERIVAR) ---
         async function renderOperator() {
             try {
-                const { data: cola } = await _supabase.from('turnos').select('*').eq('estado', 'EN_COLA').order('prioridad', { ascending: false }).order('creado_en', { ascending: true }); 
+                const { data: cola } = await _supabase.from('turnos').select('*').eq('estado', 'EN_COLA').order('prioridad', { ascending: false }).order('creado_en', { ascending: true });
                 const { data: act } = await _supabase.from('turnos').select('*').eq('operador_id', window.currentSession.user.id).in('estado', ['LLAMADO', 'EN_ATENCION']).maybeSingle();
 
-                const navButton = window.userProfile?.rol === 'ADMINISTRADOR' 
+                const navButton = window.userProfile?.rol === 'ADMINISTRADOR'
                     ? `<button onclick="renderAdmin()" class="text-[9px] bg-red-50 dark:bg-red-900/30 text-red-600 px-4 py-1.5 rounded-full border border-red-200 dark:border-red-800 font-bold uppercase hover:bg-red-600 hover:text-white transition-all shadow-sm">Volver a Admin</button>`
                     : `<button onclick="renderVisitor()" class="text-[9px] bg-slate-100 dark:bg-slate-800 px-4 py-1.5 rounded-full border dark:border-slate-700 font-bold uppercase hover:bg-blue-600 hover:text-white transition-all shadow-sm">Ir al Tótem</button>`;
 
@@ -178,13 +210,13 @@
                                 ${act ? `
                                     <div class="bg-slate-50 dark:bg-slate-950 p-12 rounded-3xl mb-8 border border-blue-500/10"><h3 class="text-8xl font-black">${act.codigo_ticket}</h3></div>
                                     <textarea id="obs" placeholder="Escriba aquí los detalles de la atención, o el motivo si va a Anular/Derivar..." class="w-full bg-slate-50 dark:bg-slate-900 p-4 rounded-2xl mb-6 border dark:border-slate-800 text-sm outline-none focus:ring-2 ring-blue-500 transition-all h-24"></textarea>
-                                    
+ 
                                     <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
                                         <button onclick="changeTicketState('${act.id}', 'FINALIZADO')" class="w-full bg-green-600 text-white py-4 rounded-2xl font-black uppercase shadow-lg shadow-green-900/20 active:scale-95 transition-all text-[11px]">✅ Finalizar</button>
                                         <button onclick="changeTicketState('${act.id}', 'DERIVADO')" class="w-full bg-orange-500 text-white py-4 rounded-2xl font-black uppercase shadow-lg shadow-orange-900/20 active:scale-95 transition-all text-[11px]">⚠️ Derivar a Admin</button>
                                         <button onclick="changeTicketState('${act.id}', 'ANULADO')" class="w-full bg-red-600 text-white py-4 rounded-2xl font-black uppercase shadow-lg shadow-red-900/20 active:scale-95 transition-all text-[11px]">❌ Anular (No asiste)</button>
                                     </div>
-                                ` : `
+                                `:`
                                     <div class="py-24 flex flex-col items-center">
                                         <p class="text-slate-400 mb-8 italic">Ventanilla libre. No tiene turnos asignados.</p>
                                         <button onclick="callNext()" class="bg-blue-600 text-white px-16 py-8 rounded-3xl font-black text-2xl shadow-xl shadow-blue-900/30 active:scale-95 transition-all hover:bg-blue-500">LLAMAR SIGUIENTE</button>
@@ -210,42 +242,38 @@
                 const { data: ven } = await _supabase.from('ventanillas').select('id').limit(1).single();
                 const { error } = await _supabase.rpc('solicitar_siguiente_turno', { p_servicio_id: nextTicket.servicio_id, p_operador_id: window.currentSession.user.id, p_ventanilla_id: ven.id });
                 if (error) throw error;
-                renderOperator();
+                // Nota: Ya no llamamos a renderOperator() manualmente aquí, 
+                // el WebSocket lo hará por nosotros automáticamente al detectar el UPDATE.
             } catch (e) { alert(e.message || "Error al asignar el siguiente ticket."); }
         }
 
-        // Lógica unificada para procesar el estado del ticket
         async function changeTicketState(tid, newState) {
             const obsInput = document.getElementById('obs').value.trim();
             let obsText = obsInput;
 
-            // Si se anula o deriva, forzamos al operador a explicar el motivo
             if ((newState === 'DERIVADO' || newState === 'ANULADO') && obsInput === "") {
                 const promptMsg = prompt(`Escriba el motivo obligatorio para marcar como ${newState}:`);
-                if (!promptMsg) return; // Si el usuario cancela, no hacemos nada
+                if (!promptMsg) return; 
                 obsText = promptMsg;
             } else if (obsInput === "") {
                 obsText = "Atención finalizada con éxito";
             }
 
-            // Actualizamos la base de datos con el nuevo estado
             const { error } = await _supabase.from('turnos')
-                .update({ 
-                    estado: newState, 
-                    finalizado_en: new Date().toISOString(), 
-                    observaciones: obsText 
+                .update({
+                    estado: newState,
+                    finalizado_en: new Date().toISOString(),
+                    observaciones: obsText
                 })
                 .eq('id', tid);
 
             if (error) alert("Error al procesar el ticket: " + error.message);
-            else renderOperator(); // Recargamos para traer el siguiente
         }
 
-        // --- MÓDULO 4: VISTA ADMINISTRADOR (CON BANDEJA DE DERIVADOS) ---
+        // --- MÓDULO 4: VISTA ADMINISTRADOR ---
         async function renderAdmin() {
             const { data: perfiles } = await _supabase.from('perfiles').select('*');
-            
-            // Obtenemos los tickets derivados para la bandeja del Admin
+ 
             const { data: derivados } = await _supabase.from('turnos').select('id, codigo_ticket, observaciones, creado_en').eq('estado', 'DERIVADO').order('creado_en', { ascending: false });
 
             document.getElementById('app').innerHTML = `
@@ -305,20 +333,18 @@
             initPieChart();
         }
 
-        // Función del Administrador para resolver el ticket derivado
         async function resolveDerivedTicket(tid) {
             const adminObs = prompt("Escriba la nota de resolución para este caso especial:");
-            if (adminObs === null) return; // Si cancela, se aborta
+            if (adminObs === null) return; 
 
             const { error } = await _supabase.from('turnos')
-                .update({ 
-                    estado: 'FINALIZADO', 
+                .update({
+                    estado: 'FINALIZADO',
                     observaciones: "RESUELTO POR ADMIN: " + (adminObs || "Sin detalles adicionales")
                 })
                 .eq('id', tid);
-                
+ 
             if (error) alert("Error al resolver: " + error.message);
-            else renderAdmin(); // Refrescar bandeja
         }
 
         async function createUser() {
@@ -328,7 +354,7 @@
             const pass = document.getElementById('u-pass').value;
 
             if(!email || !name || !pass) return alert("Por favor complete todos los campos requeridos.");
-            
+ 
             const { data: authData, error: authError } = await _supabase.auth.signUp({ email: email, password: pass });
             if (authError) return alert("Error del servidor Auth: " + authError.message);
 
@@ -337,11 +363,11 @@
             if (userId) insertData.id = userId;
 
             const { error: profileError } = await _supabase.from('perfiles').insert([insertData]);
-            
+ 
             if(profileError) alert("Error de Perfil: " + profileError.message);
-            else { 
-                alert("✅ Usuario registrado.\n\nEl sistema puede cerrar tu sesión por seguridad de Supabase para activar la nueva cuenta. Si ocurre, vuelve a ingresar como Admin."); 
-                renderAdmin(); 
+            else {
+                alert("✅ Usuario registrado.\n\nEl sistema puede cerrar tu sesión por seguridad de Supabase para activar la nueva cuenta. Si ocurre, vuelve a ingresar como Admin.");
+                renderAdmin();
             }
         }
 
@@ -357,7 +383,6 @@
             } catch (e) { alert("Error de exportación: " + e.message); }
         }
 
-        // --- FUNCIONES DE APOYO ---
         function initPieChart() {
             const ctx = document.getElementById('pieChart').getContext('2d');
             new Chart(ctx, {
@@ -365,12 +390,6 @@
                 data: { labels: ['Secretaría', 'Caja', 'Biblioteca', 'Bienestar'], datasets: [{ data: [15, 22, 10, 8], backgroundColor: ['#3b82f6', '#f59e0b', '#ef4444', '#10b981'], borderColor: 'transparent' }] },
                 options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', font: { weight: 'bold', size: 10 } } } } }
             });
-        }
-
-        function initRealtime() {
-            _supabase.channel('tv_updates').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'turnos' }, payload => {
-                if (payload.new.estado === 'LLAMADO' && document.getElementById('tv-ticket')) { document.getElementById('tv-ticket').innerText = payload.new.codigo_ticket; }
-            }).subscribe();
         }
 
         function renderLogin() {
